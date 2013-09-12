@@ -5,6 +5,7 @@ highly modified (specifically to use the icalendar class to parse existing event
 # adding a coment - still testing
 # working on the overhaul still
 # still testing for lighthouse integration
+# still testing for lighthouse integration
 require 'net/https'
 require 'uuid'
 require 'rexml/document'
