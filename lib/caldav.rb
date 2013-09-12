@@ -4,7 +4,6 @@ highly modified (specifically to use the icalendar class to parse existing event
 '''
 
 require 'net/https'
-require 'rubygems'
 require 'uuid'
 require 'rexml/document'
 require 'rexml/xpath'
@@ -63,7 +62,6 @@ class Caldav
 """
         res = nil
         http = Net::HTTP.new(@host, @port)
-        #http.set_debug_output $stderr
 
         http.start {|http|
 
@@ -86,11 +84,6 @@ class Caldav
         dtstart_string = ( Time.parse(tevent.dtstart.to_s) + Time.now.utc_offset.to_i.abs ).strftime "%Y%m%dT%H%M%S"
         dtend_string = ( Time.parse(tevent.dtend.to_s) + Time.now.utc_offset.to_i.abs ).strftime "%Y%m%dT%H%M%S"
 
-# TRIGGER;RELATED=START:-PT5M
-# ATTENDEE:#{tevent.organizer}
-# SUMMARY:#{tevent.summary}
-# DESCRIPTION:#{tevent.description}
-
         tcal = Calendar.new
         tevent.summary << " [added to noctane]"
         tevent.alarm do
@@ -103,7 +96,6 @@ class Caldav
         tcal.add_event tevent
         res = nil
         thttp = Net::HTTP.start(@host, @port)
-        #thttp.set_debug_output $stderr
         req = Net::HTTP::Put.new("#{@url}/#{tevent.uid}.ics", initheader = {'Content-Type'=>'text/calendar'} )
         req.basic_auth @user, @password
         req.body = tcal.to_ical
