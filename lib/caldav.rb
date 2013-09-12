@@ -2,11 +2,6 @@
 caldav.rb - originally from https://github.com/loosecannon93/ruby-caldav/blob/master/lib/caldav.rb
 highly modified (specifically to use the icalendar class to parse existing events)
 '''
-# adding a coment - still testing
-# working on the overhaul still
-# still testing for lighthouse integration
-# still testing for lighthouse integration
-# putting this into testing
 require 'net/https'
 require 'uuid'
 require 'rexml/document'
