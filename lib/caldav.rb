@@ -1,12 +1,19 @@
+'''
+caldav.rb - originally from https://github.com/loosecannon93/ruby-caldav/blob/master/lib/caldav.rb
+highly modified (specifically to use the icalendar class to parse existing events)
+'''
+
 require 'net/https'
 require 'rubygems'
 require 'uuid'
 require 'rexml/document'
 require 'rexml/xpath'
 require 'date'
+require 'icalendar'
+require 'time'
 
 class Event
-    attr_accessor :uid, :created, :dtstart, :dtend, :lastmodified, :summary
+    attr_accessor :uid, :created, :dtstart, :dtend, :lastmodified, :summary, :description, :name, :action
 end
 
 class Todo
@@ -24,12 +31,15 @@ module Net
 end
 
 class Caldav
+    include Icalendar
     attr_accessor :host, :port, :url, :user, :password
 
-    def initialize( host, port, url, user, password )
+    def initialize( host, port, baseurl, calendar, user, password )
        @host = host
        @port = port
-       @url = url
+       @url = "#{baseurl}/#{calendar}"
+       @baseurl = baseurl
+       @calendar = calendar
        @user = user
        @password = password 
     end
@@ -53,9 +63,8 @@ class Caldav
 """
         res = nil
         http = Net::HTTP.new(@host, @port)
-#        http.set_debug_output $stderr
+        #http.set_debug_output $stderr
 
-        #Net::HTTP.start(@host, @port) {|http|
         http.start {|http|
 
             req = Net::HTTP::Report.new(@url, initheader = {'Content-Type'=>'application/xml'} )
@@ -68,62 +77,42 @@ class Caldav
         result = []
         xml = REXML::Document.new( res.body )
         REXML::XPath.each( xml, '//c:calendar-data/', { "c"=>"urn:ietf:params:xml:ns:caldav"} ){ |c|
-            result <<  parseVcal( c.text )
+            result <<  c.text
         }
-        return result
+        return parseVcal(result)
     end
     
-    def get uuid
+    def add_alarm tevent
+        dtstart_string = ( Time.parse(tevent.dtstart.to_s) + Time.now.utc_offset.to_i.abs ).strftime "%Y%m%dT%H%M%S"
+        dtend_string = ( Time.parse(tevent.dtend.to_s) + Time.now.utc_offset.to_i.abs ).strftime "%Y%m%dT%H%M%S"
+
+# TRIGGER;RELATED=START:-PT5M
+# ATTENDEE:#{tevent.organizer}
+# SUMMARY:#{tevent.summary}
+# DESCRIPTION:#{tevent.description}
+
+        tcal = Calendar.new
+        tevent.summary << " [added to noctane]"
+        tevent.alarm do
+        action        "EMAIL"
+        description   tevent.description
+        summary       tevent.summary
+        add_attendee  "mailto:support@noctane.contegix.com"
+        trigger       "-PT5M"
+        end
+        tcal.add_event tevent
         res = nil
-        Net::HTTP.start( @host, @port ) {|http|
-            req = Net::HTTP::Get.new("#{@url}/#{uuid}.ics")
-            req.basic_auth @user, @password
-            res = http.request( req )
-        }
-        return parseVcal( res.body )
-    end
-
-    def delete uuid
-        Net::HTTP.start(@host, @port) {|http|
-            req = Net::HTTP::Delete.new("#{@url}/#{uuid}.ics")
-            req.basic_auth @user, @password
-            res = http.request( req )
-        }
-    end
-
-    def create event
-        now = DateTime.now 
-        nowstr = now.strftime "%Y%m%dT%H%M%SZ"
-        uuid_generator =  UUID.new
-        uuid = uuid_generator.generate
-
-     dings = """BEGIN:VCALENDAR
-PRODID:Caldav.rb
-VERSION:2.0
-BEGIN:VEVENT
-CREATED:#{nowstr}
-UID:#{uuid}
-SUMMARY:#{event.summary}
-DTSTART:#{event.dtstart.strftime("%Y%m%dT%H%M%S")}
-DTEND:#{event.dtend.strftime("%Y%m%dT%H%M%S")}
-END:VEVENT
-END:VCALENDAR"""
-
-
-
-        res = nil
-        http = Net::HTTP.new(@host, @port) 
-        req = Net::HTTP::Put.new("#{@url}/#{uuid}.ics")
-        req['Content-Type'] = 'text/calendar'
-        http.use_ssl = true
-        http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+        thttp = Net::HTTP.start(@host, @port)
+        #thttp.set_debug_output $stderr
+        req = Net::HTTP::Put.new("#{@url}/#{tevent.uid}.ics", initheader = {'Content-Type'=>'text/calendar'} )
         req.basic_auth @user, @password
-        req.body = dings
-        res = http.request( req )
-        puts @user, @password, @url, @host, @port, dings
-        return uuid, res
+        req.body = tcal.to_ical
+        res = thttp.request( req )
+        p req
+        p res
+        return tevent.uid
     end
-
+    
     def update event
         dings = """BEGIN:VCALENDAR
 PRODID:Caldav.rb
@@ -197,33 +186,18 @@ END:VCALENDAR"""
         }
         return result
     end
-
+    
     def parseVcal( vcal )
-        if vcal.index( "VEVENT" ) then
-            e = Event.new
-            data = filterTimezone( vcal )
-            data.split("\n").each{ |l|
-                e.uid = getField( "UID:", l) if l =~ /UID/
-                e.created = getField( "CREATED:", l) if l =~ /CREATED/
-                e.dtstart = getField( "DTSTART", l) if l =~ /DTSTART/
-                e.dtend = getField( "DTEND", l) if l =~ /DTEND/
-                e.lastmodified = getField( "LAST-MODIFIED:", l) if l =~ /LAST-MODIFIED/
-                e.summary = getField( "SUMMARY", l) if l =~ /SUMMARY/
+        return_events = Array.new
+        cals = Icalendar.parse(vcal)
+        cals.each { |tcal|
+            tcal.events.each { |tevent|
+                if tevent.recurrence_id.to_s.empty? # skip recurring events
+                    return_events << tevent
+                end
             }
-            return e
-        elsif vcal.index( "VTODO" ) then 
-            e = Todo.new
-            vcal.split("\n").each{ |l|
-                e.uid = getField( "UID:", l ) if l =~ /UID:/
-                e.created = getField( "CREATED:", l) if l =~ /CREATED:/
-                e.dtstart = getField( "DTSTAMP:", l) if l =~ /DTSTAMP:/
-                e.lastmodified = getField( "LAST-MODIFIED:", l) if l =~ /LAST-MODIFIED:/
-                e.summary = getField( "SUMMARY:", l) if l =~ /SUMMARY:/
-                e.status = getField( "STATUS:", l) if l =~ /STATUS:/
-                e.completed = getField( "COMPLETED:", l) if l =~ /COMPLETED:/
-            }
-            return e
-        end
+        }
+        return return_events
     end
     
     def filterTimezone( vcal )
